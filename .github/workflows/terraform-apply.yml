@@ -1,0 +1,61 @@
+name: Terraform Apply
+
+on:
+  push:
+    paths:
+      - "tf-kafka/**"
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tf-kafka
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Detect changed request file
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1...HEAD \
+            | grep '^tf-kafka/team-pr-requests/.*request\.tfvars$' | head -1)
+          echo "file=${CHANGED}" >> $GITHUB_OUTPUT
+          echo "Applying request file: ${CHANGED}"
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Apply
+        run: |
+          VAR_FILE="${{ steps.changed.outputs.file }}"
+          if [ -z "${VAR_FILE}" ]; then
+            echo "No team request file changed. Applying with default tfvars."
+            terraform apply -auto-approve \
+              -var="bootstrap_server_override=${{ secrets.KAFKA_BOOTSTRAP_SERVER }}" \
+              -var="kafka_tls_enabled=true"
+          else
+            terraform apply -auto-approve \
+              -var-file="${VAR_FILE}" \
+              -var="bootstrap_server_override=${{ secrets.KAFKA_BOOTSTRAP_SERVER }}"
+          fi
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}

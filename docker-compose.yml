@@ -1,0 +1,13 @@
+services:
+
+  terraform:
+    image: hashicorp/terraform:1.9
+    container_name: local-terraform
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    entrypoint: ["/bin/sh", "-lc"]
+    command: "tail -f /dev/null"
+    # Lets container reach host services via host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

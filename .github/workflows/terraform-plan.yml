@@ -1,0 +1,90 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - "tf-kafka/**"
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tf-kafka
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Detect changed request file
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^tf-kafka/team-pr-requests/.*request\.tfvars$' | head -1)
+          echo "file=${CHANGED}" >> $GITHUB_OUTPUT
+          echo "Found request file: ${CHANGED}"
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          VAR_FILE="${{ steps.changed.outputs.file }}"
+          if [ -z "${VAR_FILE}" ]; then
+            echo "No team request file changed. Running plan with default tfvars."
+            terraform plan -no-color \
+              -var="bootstrap_server_override=${{ secrets.KAFKA_BOOTSTRAP_SERVER }}" \
+              -var="kafka_tls_enabled=true"
+          else
+            terraform plan -no-color \
+              -var-file="${VAR_FILE}" \
+              -var="bootstrap_server_override=${{ secrets.KAFKA_BOOTSTRAP_SERVER }}"
+          fi
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+      - name: Comment Plan on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Plan 📖
+            **Request file:** \`${{ steps.changed.outputs.file || 'default' }}\`
+            **Status:** \`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+
+            </details>`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
